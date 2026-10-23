@@ -1,0 +1,7 @@
+{"layout": "flow", "eyebrow": "evaboot-labs · ai-bdr-reply-agent", "headline": "Every reply, answered.",
+ "subline": "Replies sorted and drafted, sent once you approve. Referrals found in Sales Navigator.",
+ "nodes": [{"label": "01 · Replies", "title": "Instantly", "caption": "New replies only"},
+           {"label": "02 · Sort", "title": "AI Agent", "caption": "9 kinds, one rule each"},
+           {"label": "03 · Referrals", "title": "Evaboot", "caption": "The person they named"},
+           {"label": "04 · Result", "title": "You approve", "caption": "Same thread"}],
+ "spec": "server <em>mcp.evaboot.com/mcp</em> · nothing sent without your yes"}

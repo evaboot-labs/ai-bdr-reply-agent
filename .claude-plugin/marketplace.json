@@ -1,0 +1,17 @@
+{
+  "name": "evaboot-labs-ai-bdr-reply-agent",
+  "owner": {
+    "name": "Evaboot",
+    "url": "https://evaboot.com"
+  },
+  "metadata": {
+    "description": "An AI BDR for your replies: sorted, drafted, sent once you approve."
+  },
+  "plugins": [
+    {
+      "name": "ai-bdr-reply-agent",
+      "source": "./",
+      "description": "Handles the replies to your outbound campaign like a BDR: an AI Agent sorts each Instantly reply, drafts the answer from your playbook, finds the person a referral points to with Evaboot, and sends only what you approve."
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "name": "ai-bdr-reply-agent",
+  "version": "1.0.0",
+  "description": "Handles the replies to your outbound campaign like a BDR: an AI Agent sorts each Instantly reply, drafts the answer from your playbook, finds the person a referral points to with Evaboot, and sends only what you approve.",
+  "author": {
+    "name": "Evaboot",
+    "url": "https://evaboot.com"
+  },
+  "homepage": "https://evaboot.com/blog/what-is-an-ai-bdr",
+  "repository": "https://github.com/evaboot-labs/ai-bdr-reply-agent",
+  "license": "MIT",
+  "privacyPolicyUrl": "https://evaboot.com/privacy-policy",
+  "keywords": [
+    "ai-bdr",
+    "ai-agent",
+    "instantly",
+    "reply-handling",
+    "sales-navigator",
+    "evaboot",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}
