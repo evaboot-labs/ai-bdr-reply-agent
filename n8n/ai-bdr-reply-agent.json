@@ -1,0 +1,704 @@
+{
+  "name": "AI BDR reply agent (Instantly + Claude)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "87e8830c-bc24-47e8-8100-32163cd52dc4",
+      "name": "Every hour",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "4d6c6b4d-d8a2-4d35-bd92-16e1e2d26597",
+              "name": "instantly_campaign_id",
+              "type": "string",
+              "value": "PASTE_THE_INSTANTLY_CAMPAIGN_ID"
+            },
+            {
+              "id": "83922d4c-3d10-415a-b3ff-c9849092ed7a",
+              "name": "replies_tab_url",
+              "type": "string",
+              "value": "PASTE_THE_REPLIES_TAB_URL_WITH_GID"
+            },
+            {
+              "id": "9295b3e0-c47f-4267-8617-0e453eabbffc",
+              "name": "playbook",
+              "type": "string",
+              "value": "What we sell: Evaboot exports Sales Navigator searches to clean lists with verified emails, and can send each week's new people straight to the CRM.\nBooking link: https://cal.com/your-team/20min\nPricing page: https://evaboot.com/pricing\nPrices you may quote: none. For any price question, answer with the pricing page.\nNever state a number, a customer name or a feature that is not in this playbook."
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "d9e80a42-08de-4d28-a2ee-372bb98de87b",
+      "name": "Sort settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.instantly.ai/api/v2/emails?campaign_id={{ $json.instantly_campaign_id }}&email_type=received&limit=100",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "b3919585-8dc3-406d-8da1-9e0698d5b404",
+      "name": "Get the replies",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Instantly API key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $('Sort settings').first().json.replies_tab_url }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $('Sort settings').first().json.replies_tab_url }}"
+        },
+        "options": {}
+      },
+      "id": "fb20e191-799e-4306-b5be-692e41db1f95",
+      "name": "Replies so far",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        660,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// The replies not in the Replies tab yet, oldest first, with the quoted original removed.\nconst seen = new Set($('Replies so far').all().map(r => String(r.json['Id'] || '')).filter(Boolean));\nconst QUOTE = /^(On .{5,200}wrote:|Le .{5,200}a \u00e9crit|-{2,} ?Original Message|From: .+@|>)/m;\nconst text = e => {\n  const t = (e.body && (e.body.text || String(e.body.html || '').replace(/<[^>]+>/g, ' '))) || e.content_preview || '';\n  const m = t.match(QUOTE);\n  return (m ? t.slice(0, m.index) : t).split(/\\s+/).join(' ').trim();\n};\nconst replies = ($('Get the replies').first().json.items || [])\n  .filter(e => !seen.has(e.id))\n  .map(e => ({ id: e.id, lead: e.lead || e.from_address_email, subject: e.subject || '', text: text(e),\n               received: e.timestamp_email, eaccount: e.eaccount || String(e.to_address_email_list || '').split(',')[0] }))\n  .sort((a, b) => String(a.received).localeCompare(String(b.received)));\nif (!replies.length) return [];\nreturn [{ json: { replies } }];\n"
+      },
+      "id": "77fff031-7f4d-4dd6-bd08-57b290cede39",
+      "name": "New replies",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "hasOutputParser": true,
+        "text": "={{ JSON.stringify($json.replies.map(r => ({ id: r.id, from: r.lead, subject: r.subject, received: r.received, reply: r.text }))) }}",
+        "options": {
+          "systemMessage": "=You are a BDR who answers the replies to an outbound email campaign. For each reply in the JSON, sort it into one category and draft the answer, following the playbook below. Use only the facts in the playbook; never invent a price, a customer, a feature or a date.\n\nReturn {replies: [{id, category, reason, draft, follow_up_on, referred_role}]}:\n- category: interested, question, not_now, referral, objection, not_interested, unsubscribe, out_of_office or other.\n- reason: one line under 25 words, from the reply itself.\n- draft: plain text, 15 to 120 words, \"Hi <first name>,\" then the answer, signed with a first name only. Empty for unsubscribe, out_of_office and other.\n  - interested: thanks and the booking link, nothing else.\n  - question: answer from the playbook only, then offer a call; if the playbook has no answer, say a colleague will reply.\n  - not_now: thank them and say when you will check back.\n  - referral: thank them and ask for a short intro to the person they named.\n  - objection: acknowledge it, one difference from the playbook, no pressure.\n  - not_interested: one polite line, no pitch.\n- follow_up_on: for not_now only, YYYY-MM-DD: the date they gave, or 90 days after the reply.\n- referred_role: for referral only, the role or name they pointed to.\n- Never guess anyone's gender: no he, she, him or her. Use the first name or \"they\".\n\nPlaybook:\n{{ $('Sort settings').first().json.playbook }}",
+          "maxIterations": 3
+        }
+      },
+      "id": "9c73a98d-fb87-4934-9728-75f11c90788b",
+      "name": "Sort and draft",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-sonnet-5-5",
+          "cachedResultName": "claude-sonnet-5-5"
+        },
+        "options": {
+          "maxTokensToSample": 6000
+        }
+      },
+      "id": "8771a668-4f80-4f51-9e11-29b180da5bc1",
+      "name": "Claude",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        1060,
+        200
+      ],
+      "credentials": {
+        "anthropicApi": {
+          "id": "",
+          "name": "Anthropic"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"required\": [\n    \"replies\"\n  ],\n  \"properties\": {\n    \"replies\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"id\",\n          \"category\",\n          \"reason\"\n        ],\n        \"properties\": {\n          \"id\": {\n            \"type\": \"string\"\n          },\n          \"category\": {\n            \"type\": \"string\"\n          },\n          \"reason\": {\n            \"type\": \"string\"\n          },\n          \"draft\": {\n            \"type\": \"string\"\n          },\n          \"follow_up_on\": {\n            \"type\": \"string\"\n          },\n          \"referred_role\": {\n            \"type\": \"string\"\n          }\n        }\n      }\n    }\n  }\n}"
+      },
+      "id": "65775c35-9ae1-4794-a441-93007526f139",
+      "name": "Verdicts",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1220,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// Same rules as bdr.py check. A reply whose verdict breaks a rule gets a row with the problem and no draft,\n// so it is never sent by mistake.\nconst CATS = { interested: [true, 1], question: [true, null], not_now: [true, null], referral: [true, -2],\n               objection: [true, null], not_interested: [true, -1], unsubscribe: [false, -1],\n               out_of_office: [false, 0], other: [false, null] };\nconst playbook = $('Sort settings').first().json.playbook;\nconst link = (playbook.match(/Booking link: (\\S+)/) || [])[1];\nconst verdicts = Object.fromEntries(($json.output.replies || []).map(v => [v.id, v]));\nconst settings = $('Sort settings').first().json;\nreturn $('New replies').first().json.replies.map(r => {\n  const v = verdicts[r.id] || {};\n  const cat = v.category, draft = String(v.draft || '').trim(), n = draft ? draft.split(/\\s+/).length : 0;\n  const problems = [];\n  if (!CATS[cat]) problems.push('no category');\n  else {\n    if (CATS[cat][0] && !draft) problems.push(`a ${cat} reply needs a draft`);\n    if (!CATS[cat][0] && draft) problems.push(`no draft for ${cat}`);\n    if (draft && (n < 15 || n > 120)) problems.push(`draft is ${n} words`);\n    if (!v.reason || String(v.reason).split(/\\s+/).length > 25) problems.push('reason missing or over 25 words');\n    for (const p of draft.match(/[$\u20ac\u00a3]\\s?\\d[\\d,.]*|\\d[\\d,.]*\\s?(?:USD|EUR|credits?)/g) || [])\n      if (!playbook.replace(/ /g, '').includes(p.replace(/ /g, ''))) problems.push(`quotes ${p}, not in the playbook`);\n    if (cat === 'interested' && link && !draft.includes(link)) problems.push('no booking link');\n    if (cat === 'not_now' && !/^\\d{4}-\\d{2}-\\d{2}$/.test(String(v.follow_up_on || ''))) problems.push('no follow-up date');\n    if (cat === 'referral' && !v.referred_role) problems.push('no referred role');\n    if (link && link.includes('your-team')) problems.push('the playbook still has the example booking link');\n  }\n  return { json: {\n    'Received': r.received, 'Id': r.id, 'Lead': r.lead, 'They wrote': r.text.slice(0, 1000),\n    'Category': cat || '', 'Reason': v.reason || '', 'Draft': problems.length ? '' : draft,\n    'Follow up on': v.follow_up_on || '', 'Referred': v.referred_role || v.referred_name || '',\n    'Check': problems.join('; ') || 'ok', 'Send': '', 'Sent': '',\n    'Subject': /^re:/i.test(r.subject) ? r.subject : 'Re: ' + r.subject, 'Mailbox': r.eaccount,\n    'Campaign': settings.instantly_campaign_id,\n  } };\n});\n"
+      },
+      "id": "40327b91-8535-445f-9baf-62ff29e4fd01",
+      "name": "Check the drafts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $('Sort settings').first().json.replies_tab_url }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $('Sort settings').first().json.replies_tab_url }}"
+        },
+        "options": {
+          "useAppend": true
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        }
+      },
+      "id": "d1363d21-3412-4f8d-a046-7fa1372f2894",
+      "name": "Add to Replies",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1660,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "079501eb-a1c9-4155-a469-8b558b5e8491",
+      "name": "Every 15 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "4f15006d-65e0-4019-8732-6b246873cacf",
+              "name": "instantly_campaign_id",
+              "type": "string",
+              "value": "PASTE_THE_INSTANTLY_CAMPAIGN_ID"
+            },
+            {
+              "id": "c2d9a400-35bd-4700-8b37-cc4c0a9b19db",
+              "name": "replies_tab_url",
+              "type": "string",
+              "value": "PASTE_THE_REPLIES_TAB_URL_WITH_GID"
+            },
+            {
+              "id": "52bf1a5a-1e65-44e1-b7bf-877c115784d2",
+              "name": "playbook",
+              "type": "string",
+              "value": "What we sell: Evaboot exports Sales Navigator searches to clean lists with verified emails, and can send each week's new people straight to the CRM.\nBooking link: https://cal.com/your-team/20min\nPricing page: https://evaboot.com/pricing\nPrices you may quote: none. For any price question, answer with the pricing page.\nNever state a number, a customer name or a feature that is not in this playbook."
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "28ae0cd0-e0ca-4cce-96cc-f62e69393935",
+      "name": "Send settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $('Send settings').first().json.replies_tab_url }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $('Send settings').first().json.replies_tab_url }}"
+        },
+        "options": {}
+      },
+      "id": "7b69ac90-b5a9-4a84-873e-127982d99682",
+      "name": "Replies",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        440,
+        420
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// Rows to act on, never sent yet and passed the check: a \"yes\" in Send with a draft, and every unsubscribe\n// (blocked without approval, so the address never gets another email).\nconst INTEREST = { interested: 1, referral: -2, not_interested: -1, unsubscribe: -1, out_of_office: 0 };\nreturn $input.all().map(i => i.json)\n  .filter(r => r.Id && !String(r.Sent || '').trim())\n  .filter(r => r.Check === 'ok')\n  .filter(r => r.Category === 'unsubscribe' ||\n               (String(r.Send || '').trim().toLowerCase() === 'yes' && String(r.Draft || '').trim()))\n  .map(r => ({ json: { ...r, action: r.Category === 'unsubscribe' ? 'block' : 'reply',\n                       interest: INTEREST[r.Category] ?? null } }));\n"
+      },
+      "id": "51441f14-49e8-4b9a-8160-281d01eff26c",
+      "name": "Approved or unsubscribe",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.action === 'block' ? 'https://api.instantly.ai/api/v2/block-lists-entries' : 'https://api.instantly.ai/api/v2/emails/reply' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.action === 'block' ? { bl_value: $json.Lead } : { eaccount: $json.Mailbox, reply_to_uuid: $json.Id, subject: $json.Subject, body: { text: $json.Draft, html: String($json.Draft).trim().split(/\\n\\s*\\n/).map(p => '<p>' + p.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\\n/g, '<br>') + '</p>').join('') } }) }}"
+      },
+      "id": "54650562-ae16-43f1-b73b-4e352c1dc5a4",
+      "name": "Reply or block",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        420
+      ],
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Instantly API key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "68cfe2ee-103d-46fe-9153-037c1cf70ed5",
+              "leftValue": "={{ $('Approved or unsubscribe').item.json.interest }}",
+              "rightValue": "",
+              "operator": {
+                "type": "number",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9617a397-7c5a-4acc-a763-385afb79f28b",
+      "name": "Has an interest status?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.instantly.ai/api/v2/leads/update-interest-status",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ lead_email: $('Approved or unsubscribe').item.json.Lead, interest_value: $('Approved or unsubscribe').item.json.interest, campaign_id: $('Approved or unsubscribe').item.json.Campaign }) }}"
+      },
+      "id": "e6f82c89-a8cf-4278-b726-3f49aa7c8ec7",
+      "name": "Set interest status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        340
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Instantly API key"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "f47dc23c-1226-4ef9-9563-d19629078bd6",
+      "name": "Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $('Send settings').first().json.replies_tab_url }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $('Send settings').first().json.replies_tab_url }}"
+        },
+        "options": {},
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Id": "={{ $('Approved or unsubscribe').item.json.Id }}",
+            "Sent": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [
+            "Id"
+          ],
+          "schema": [
+            {
+              "id": "Id",
+              "displayName": "Id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Sent",
+              "displayName": "Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      },
+      "id": "656ab9c3-c291-4300-840b-201c351e00f5",
+      "name": "Mark as sent",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1540,
+        420
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every hour": {
+      "main": [
+        [
+          {
+            "node": "Sort settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sort settings": {
+      "main": [
+        [
+          {
+            "node": "Get the replies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get the replies": {
+      "main": [
+        [
+          {
+            "node": "Replies so far",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Replies so far": {
+      "main": [
+        [
+          {
+            "node": "New replies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New replies": {
+      "main": [
+        [
+          {
+            "node": "Sort and draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sort and draft": {
+      "main": [
+        [
+          {
+            "node": "Check the drafts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check the drafts": {
+      "main": [
+        [
+          {
+            "node": "Add to Replies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 15 minutes": {
+      "main": [
+        [
+          {
+            "node": "Send settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send settings": {
+      "main": [
+        [
+          {
+            "node": "Replies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Replies": {
+      "main": [
+        [
+          {
+            "node": "Approved or unsubscribe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approved or unsubscribe": {
+      "main": [
+        [
+          {
+            "node": "Reply or block",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply or block": {
+      "main": [
+        [
+          {
+            "node": "Has an interest status?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set interest status": {
+      "main": [
+        [
+          {
+            "node": "Mark as sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Done": {
+      "main": [
+        [
+          {
+            "node": "Mark as sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has an interest status?": {
+      "main": [
+        [
+          {
+            "node": "Set interest status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Sort and draft",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verdicts": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Sort and draft",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "active": false
+}
